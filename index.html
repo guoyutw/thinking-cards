@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1720">
+<title>Thinking Cards</title>
+<style>
+  :root{
+    --bg:#0b1117;
+    --panel:#121a22;
+    --panel2:#17212b;
+    --text:#f3f7fa;
+    --muted:#9aa8b5;
+    --line:#263341;
+    --accent:#9ee6bd;
+    --accent2:#2f8f62;
+    --danger:#ff8f8f;
+    --shadow: 0 10px 30px rgba(0,0,0,.22);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif}
+  body{min-height:100vh}
+  .app{max-width:980px;margin:0 auto;padding:20px 16px 96px}
+  header{
+    position:sticky;top:0;z-index:20;
+    padding:14px 0 12px;
+    background:linear-gradient(180deg,var(--bg) 78%,rgba(11,17,23,0));
+    backdrop-filter: blur(10px);
+  }
+  .toprow{display:flex;gap:12px;align-items:center;justify-content:space-between}
+  h1{font-size:28px;margin:0;letter-spacing:-.02em}
+  .sub{margin:6px 0 0;color:var(--muted);font-size:14px}
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  button,.filelabel{
+    appearance:none;border:1px solid var(--line);background:var(--panel2);color:var(--text);
+    border-radius:13px;padding:10px 13px;font-weight:650;font-size:14px;cursor:pointer
+  }
+  button:hover,.filelabel:hover{border-color:#3d5368}
+  .primary{background:var(--accent);color:#082016;border-color:transparent}
+  .danger{color:var(--danger)}
+  .searchwrap{display:flex;gap:10px;margin-top:16px}
+  input[type="search"], input[type="text"], textarea, select{
+    width:100%;border:1px solid var(--line);background:#0e151c;color:var(--text);
+    border-radius:14px;padding:12px 13px;font:inherit;outline:none
+  }
+  textarea{min-height:210px;resize:vertical;line-height:1.55}
+  input:focus,textarea:focus,select:focus{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(47,143,98,.16)}
+  .chips{display:flex;gap:8px;overflow:auto;padding:12px 0 2px;scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{white-space:nowrap;border-radius:999px;padding:8px 12px;background:transparent;color:var(--muted)}
+  .chip.active{background:#1b2b24;color:var(--accent);border-color:#355c48}
+  .meta{display:flex;justify-content:space-between;align-items:center;margin:12px 2px 10px;color:var(--muted);font-size:13px}
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  .card{
+    background:linear-gradient(180deg,var(--panel),#101820);
+    border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:var(--shadow);
+    display:flex;flex-direction:column;min-height:220px
+  }
+  .cardtop{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+  .title{font-size:20px;font-weight:800;letter-spacing:-.01em}
+  .badge{font-size:12px;color:var(--accent);border:1px solid #315744;background:#13241d;border-radius:999px;padding:5px 9px;white-space:nowrap}
+  .usage{color:#c5d0d8;font-size:14px;line-height:1.45;margin:10px 0 12px}
+  .prompt{
+    color:var(--muted);font-size:13px;line-height:1.55;
+    white-space:pre-wrap;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden
+  }
+  .card.expanded .prompt{-webkit-line-clamp:unset;display:block}
+  .cardfooter{margin-top:auto;padding-top:15px;display:flex;gap:8px;align-items:center}
+  .copy{flex:1;background:var(--accent);color:#082016;border-color:transparent;font-size:15px}
+  .ghost{background:transparent}
+  .empty{padding:48px 14px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:18px}
+  .fab{
+    position:fixed;right:20px;bottom:24px;width:58px;height:58px;border-radius:18px;
+    display:grid;place-items:center;font-size:28px;background:var(--accent);color:#082016;
+    border:none;box-shadow:0 12px 30px rgba(0,0,0,.35)
+  }
+  dialog{
+    width:min(680px,calc(100vw - 24px));border:1px solid var(--line);border-radius:20px;
+    background:var(--panel);color:var(--text);padding:0;box-shadow:var(--shadow)
+  }
+  dialog::backdrop{background:rgba(0,0,0,.62);backdrop-filter:blur(4px)}
+  .modal{padding:18px}
+  .modal h2{margin:0 0 16px}
+  .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .field{margin:10px 0}
+  .field label{display:block;color:var(--muted);font-size:13px;margin:0 0 6px}
+  .modalactions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+  .toast{
+    position:fixed;left:50%;bottom:92px;transform:translateX(-50%) translateY(12px);
+    background:#e9fff3;color:#0a2b1d;padding:10px 14px;border-radius:999px;font-weight:750;
+    opacity:0;pointer-events:none;transition:.2s;box-shadow:var(--shadow);z-index:50
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .note{font-size:12px;color:var(--muted);margin-top:8px}
+  @media (max-width:720px){
+    .grid{grid-template-columns:1fr}
+    h1{font-size:24px}
+    .toprow{align-items:flex-start}
+    .actions{justify-content:flex-end}
+    .formgrid{grid-template-columns:1fr}
+    .app{padding-left:12px;padding-right:12px}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="toprow">
+      <div>
+        <h1>Thinking Cards</h1>
+        <p class="sub">你的 Prompt 小工具箱：找卡片 → 複製 → 貼到 ChatGPT。</p>
+      </div>
+      <div class="actions">
+        <label class="filelabel" for="importFile">匯入</label>
+        <input id="importFile" type="file" accept=".json,application/json" hidden>
+        <button id="exportBtn">匯出</button>
+      </div>
+    </div>
+    <div class="searchwrap">
+      <input id="search" type="search" placeholder="搜尋標題、用途或 Prompt…">
+    </div>
+    <div id="chips" class="chips"></div>
+    <div class="meta">
+      <span id="count"></span>
+      <span>資料只存在這台瀏覽器</span>
+    </div>
+  </header>
+
+  <main id="grid" class="grid"></main>
+</div>
+
+<button id="addBtn" class="fab" aria-label="新增 Prompt">＋</button>
+
+<dialog id="editor">
+  <form method="dialog" class="modal" id="editorForm">
+    <h2 id="editorTitle">新增 Prompt</h2>
+    <input id="editId" type="hidden">
+    <div class="formgrid">
+      <div class="field">
+        <label for="title">名稱</label>
+        <input id="title" type="text" required placeholder="例如：證據檢查">
+      </div>
+      <div class="field">
+        <label for="category">分類</label>
+        <input id="category" type="text" placeholder="例如：驗證">
+      </div>
+    </div>
+    <div class="field">
+      <label for="usage">什麼時候用</label>
+      <input id="usage" type="text" placeholder="一句話描述使用時機">
+    </div>
+    <div class="field">
+      <label for="prompt">Prompt</label>
+      <textarea id="prompt" required placeholder="貼上完整提示詞"></textarea>
+    </div>
+    <div class="note">儲存後會留在這台瀏覽器的 localStorage。可用「匯出」備份成 JSON。</div>
+    <div class="modalactions">
+      <button value="cancel" type="button" id="cancelBtn">取消</button>
+      <button class="primary" value="save" type="submit">儲存</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast">已複製</div>
+
+<script>
+const STARTER = [
+  {
+    id:"deep-question",
+    title:"更深的問題",
+    category:"探索",
+    usage:"想看看最近反覆討論的事情底下，是否其實繞著同一個更深問題。",
+    prompt:`根據你目前能取得的跨對話記憶與近期脈絡，在我最近反覆討論的問題背後，有沒有一個更深的問題，是我一直繞著它走，卻沒有真正問出來的？
+
+請區分：哪些是你真的從跨對話脈絡看到的重複證據，哪些只是你的推測。如果現有脈絡不足以支持一個共同母題，就直接說不足，不要為了給出漂亮答案而硬串。`
+  },
+  {
+    id:"fable-reframe",
+    title:"換框寓言",
+    category:"換視角",
+    usage:"覺得自己卡在同一種觀看方式，想先拉開距離，再重新看問題。",
+    prompt:`先不要直接分析、解釋或給我解法。
+
+請根據我們現在正在談的問題，講一個表面情境完全不同、但核心結構相似的短寓言或小故事，讓我可以從旁邊重新看這件事。
+
+不要把原本的事件換皮重講，也不要先告訴我寓意。
+
+故事講完後，再用一個蘇格拉底式問題，問我從這個故事裡看到了什麼，陪我繼續往下想。`
+  },
+  {
+    id:"goal-align",
+    title:"目標對焦",
+    category:"對焦",
+    usage:"聊了一陣子、準備開始做之前，先確認真正目標與問題有沒有對準。",
+    prompt:`先不要急著執行。用你自己的話告訴我：你認為我真正想達成的目標是什麼、我現在真正想解決的問題是什麼。也請分清楚哪些是我的目標，哪些只是我目前想到的解法；如果你認為我其實問錯問題了，也直接指出來。
+
+請明確區分：哪些是我明確說過的、哪些是你根據對話推測的。`
+  },
+  {
+    id:"handoff",
+    title:"短 Handoff",
+    category:"延續",
+    usage:"這串要結束或準備換到另一個 ChatGPT 對話時，快速保住目前狀態。",
+    prompt:`請給我一份很短的 handoff，讓我貼到另一個 ChatGPT 對話繼續討論。
+
+只保留：
+現在在做什麼／目標
+目前做到哪裡
+已經確定的重要決策
+現在卡在哪裡或正在等什麼
+下一個對話最需要知道的一件事
+
+不要重述完整歷史，不要重新分析，不要延伸新方案。不要把仍在驗證的假說寫成已確定決策。控制在能快速讀完的長度。`
+  }
+];
+
+const KEY = "thinkingCards.v1";
+let cards = load();
+let category = "全部";
+let query = "";
+
+function uid(){ return "p_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+function load(){
+  try{
+    const raw = localStorage.getItem(KEY);
+    if(raw) return JSON.parse(raw);
+  }catch(e){}
+  localStorage.setItem(KEY, JSON.stringify(STARTER));
+  return structuredClone(STARTER);
+}
+function save(){ localStorage.setItem(KEY, JSON.stringify(cards)); }
+function esc(s=""){ return s.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m])); }
+function toast(msg="已複製"){
+  const el=document.getElementById("toast"); el.textContent=msg; el.classList.add("show");
+  setTimeout(()=>el.classList.remove("show"),1500);
+}
+async function copyText(text){
+  try{ await navigator.clipboard.writeText(text); }
+  catch{
+    const ta=document.createElement("textarea"); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+  }
+  toast("已複製 Prompt");
+}
+function categories(){
+  return ["全部", ...Array.from(new Set(cards.map(c=>c.category||"未分類"))).sort()];
+}
+function renderChips(){
+  const box=document.getElementById("chips");
+  box.innerHTML=categories().map(c=>`<button class="chip ${c===category?"active":""}" data-cat="${esc(c)}">${esc(c)}</button>`).join("");
+  box.querySelectorAll("button").forEach(b=>b.onclick=()=>{category=b.dataset.cat; render();});
+}
+function filtered(){
+  const q=query.trim().toLowerCase();
+  return cards.filter(c=>{
+    const catOk=category==="全部" || (c.category||"未分類")===category;
+    const text=(c.title+" "+c.usage+" "+c.prompt+" "+c.category).toLowerCase();
+    return catOk && (!q || text.includes(q));
+  });
+}
+function render(){
+  renderChips();
+  const list=filtered();
+  document.getElementById("count").textContent=`${list.length} 張卡片`;
+  const grid=document.getElementById("grid");
+  if(!list.length){ grid.innerHTML=`<div class="empty">沒有符合的卡片。</div>`; return; }
+  grid.innerHTML=list.map(c=>`
+    <article class="card" data-id="${esc(c.id)}">
+      <div class="cardtop">
+        <div class="title">${esc(c.title)}</div>
+        <div class="badge">${esc(c.category||"未分類")}</div>
+      </div>
+      <div class="usage">${esc(c.usage||"")}</div>
+      <div class="prompt">${esc(c.prompt)}</div>
+      <div class="cardfooter">
+        <button class="copy" data-act="copy">複製</button>
+        <button class="ghost" data-act="expand">展開</button>
+        <button class="ghost" data-act="edit">編輯</button>
+      </div>
+    </article>
+  `).join("");
+
+  grid.querySelectorAll(".card").forEach(card=>{
+    const id=card.dataset.id, item=cards.find(x=>x.id===id);
+    card.querySelector('[data-act="copy"]').onclick=()=>copyText(item.prompt);
+    card.querySelector('[data-act="expand"]').onclick=(e)=>{
+      card.classList.toggle("expanded");
+      e.currentTarget.textContent=card.classList.contains("expanded")?"收合":"展開";
+    };
+    card.querySelector('[data-act="edit"]').onclick=()=>openEditor(item);
+  });
+}
+
+const editor=document.getElementById("editor");
+const form=document.getElementById("editorForm");
+function openEditor(item=null){
+  document.getElementById("editorTitle").textContent=item?"編輯 Prompt":"新增 Prompt";
+  document.getElementById("editId").value=item?.id||"";
+  document.getElementById("title").value=item?.title||"";
+  document.getElementById("category").value=item?.category||"";
+  document.getElementById("usage").value=item?.usage||"";
+  document.getElementById("prompt").value=item?.prompt||"";
+  editor.showModal();
+}
+document.getElementById("addBtn").onclick=()=>openEditor();
+document.getElementById("cancelBtn").onclick=()=>editor.close();
+
+form.onsubmit=(e)=>{
+  e.preventDefault();
+  const id=document.getElementById("editId").value;
+  const item={
+    id:id||uid(),
+    title:document.getElementById("title").value.trim(),
+    category:document.getElementById("category").value.trim()||"未分類",
+    usage:document.getElementById("usage").value.trim(),
+    prompt:document.getElementById("prompt").value.trim()
+  };
+  if(!item.title || !item.prompt) return;
+  const idx=cards.findIndex(x=>x.id===item.id);
+  if(idx>=0) cards[idx]=item; else cards.unshift(item);
+  save(); editor.close(); render(); toast(idx>=0?"已更新":"已新增");
+};
+
+document.getElementById("search").oninput=e=>{ query=e.target.value; render(); };
+
+document.getElementById("exportBtn").onclick=()=>{
+  const blob=new Blob([JSON.stringify(cards,null,2)],{type:"application/json;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="thinking-cards-prompts.json"; a.click(); URL.revokeObjectURL(a.href);
+};
+
+document.getElementById("importFile").onchange=async e=>{
+  const file=e.target.files?.[0]; if(!file) return;
+  try{
+    const data=JSON.parse(await file.text());
+    if(!Array.isArray(data)) throw new Error("JSON 必須是陣列");
+    const cleaned=data.map((x,i)=>({
+      id:x.id||uid()+"_"+i,
+      title:String(x.title||"未命名"),
+      category:String(x.category||"未分類"),
+      usage:String(x.usage||""),
+      prompt:String(x.prompt||"")
+    })).filter(x=>x.prompt);
+    const replace=confirm(`找到 ${cleaned.length} 張卡片。\n\n按「確定」＝取代目前全部卡片\n按「取消」＝合併進目前卡片`);
+    if(replace) cards=cleaned;
+    else{
+      const byId=new Map(cards.map(x=>[x.id,x]));
+      cleaned.forEach(x=>byId.set(x.id,x));
+      cards=[...byId.values()];
+    }
+    save(); render(); toast("匯入完成");
+  }catch(err){ alert("匯入失敗：" + err.message); }
+  e.target.value="";
+};
+
+// Long-press / contextual delete intentionally omitted from UI.
+// Delete is available from edit mode with keyboard shortcut? Add explicit dblclick fallback.
+editor.addEventListener("keydown", e=>{
+  if(e.key==="Delete" && e.ctrlKey){
+    const id=document.getElementById("editId").value;
+    if(id && confirm("刪除這張卡片？")){
+      cards=cards.filter(x=>x.id!==id); save(); editor.close(); render(); toast("已刪除");
+    }
+  }
+});
+
+render();
+</script>
+</body>
+</html>
