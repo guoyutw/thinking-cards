@@ -658,7 +658,10 @@ document.getElementById("importFile").onchange=async e=>{
       const starter=STARTER.find(c=>c.id===item.id);
       if(starter && item.category===LEGACY_CATEGORIES[item.id]) item.category=starter.category;
     }
-    const replace=confirm(`找到 ${cleaned.length} 張卡片。\n\n按「確定」＝取代目前全部卡片\n按「取消」＝合併進目前卡片`);
+    const statsHint=importedStats
+      ? "備份內含複製紀錄：取代會還原備份統計；合併時相同日期不重複累加。"
+      : "舊版卡片陣列不含統計：目前複製紀錄會保留。";
+    const replace=confirm(`找到 ${cleaned.length} 張卡片。\n\n按「確定」＝取代全部卡片\n按「取消」＝合併卡片\n\n${statsHint}`);
     if(importedStats){
       const nextStats=replace?importedStats:mergeCopyStats(copyStats,importedStats);
       if(!saveCopyStats(nextStats)) throw new Error("無法儲存複製紀錄，匯入已停止");
