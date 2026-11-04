@@ -40,6 +40,11 @@
   .primary{background:var(--accent);color:#082016;border-color:transparent}
   .danger{color:var(--danger)}
   .searchwrap{display:flex;gap:10px;margin-top:16px}
+  .usage-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 0}
+  .usage-controls select{width:auto;min-width:175px;max-width:100%;padding:9px 12px;font-size:13px}
+  .usage-controls label{font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center;cursor:pointer}
+  .copy-stats{display:flex;flex-wrap:wrap;gap:5px 12px;margin:0 0 10px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+  .copy-stats span{white-space:nowrap}
   input[type="search"], input[type="text"], textarea, select{
     width:100%;border:1px solid var(--line);background:#0e151c;color:var(--text);
     border-radius:14px;padding:12px 13px;font:inherit;outline:none
@@ -116,18 +121,27 @@
         <p class="sub">你的 Prompt 小工具箱：找卡片 → 複製 → 貼到 ChatGPT。</p>
       </div>
       <div class="actions">
-        <label class="filelabel" for="importFile">匯入</label>
+        <label class="filelabel" for="importFile">匯入備份</label>
         <input id="importFile" type="file" accept=".json,application/json" hidden>
-        <button id="exportBtn">匯出</button>
+        <button id="exportBtn">匯出備份</button>
       </div>
     </div>
     <div class="searchwrap">
       <input id="search" type="search" placeholder="搜尋標題、用途或 Prompt…">
     </div>
+    <div class="usage-controls" aria-label="複製紀錄篩選與排序">
+      <select id="sortBy" aria-label="卡片排序">
+        <option value="default">預設排序</option>
+        <option value="30d">近 30 天複製最多</option>
+        <option value="total">累計複製最多</option>
+        <option value="last">最近複製</option>
+      </select>
+      <label><input type="checkbox" id="unusedOnly">只看尚無複製紀錄</label>
+    </div>
     <div id="chips" class="chips"></div>
     <div class="meta">
       <span id="count"></span>
-      <span>個人修改儲存在這台瀏覽器</span>
+      <span id="copySummary">複製紀錄僅保存在這台瀏覽器</span>
     </div>
   </header>
 
@@ -163,7 +177,7 @@
       <label for="prompt">Prompt</label>
       <textarea id="prompt" required placeholder="貼上完整提示詞"></textarea>
     </div>
-    <div class="note">儲存後會留在這台瀏覽器的 localStorage。可用「匯出」備份成 JSON。</div>
+    <div class="note">卡片與複製紀錄保存在這台瀏覽器。可用「匯出備份」保存 JSON；舊版卡片陣列仍可匯入。</div>
     <div class="modalactions">
       <button value="cancel" type="button" id="cancelBtn">取消</button>
       <button class="primary" value="save" type="submit">儲存</button>
@@ -269,6 +283,8 @@ const STARTER = [
 ];
 
 const KEY = "thinkingCards.v1";
+const COPY_STATS_KEY = "thinkingCards.copyStats.v1";
+const BACKUP_FORMAT = "thinking-cards-backup-v2";
 const OLD_LOOP_MIGRATION_KEY = "thinkingCards.added.loop-diagnosis-v0.3";
 const GROUP_MIGRATION_KEY = "thinkingCards.migrated.three-groups-nine-cards-v1";
 const GLOBAL_RESEARCH_MIGRATION_KEY = "thinkingCards.added.global-research-navigator-v0.1";
@@ -298,6 +314,9 @@ const DISPLAY_ORDER = [
 let cards = load();
 let category = "全部";
 let query = "";
+let sortMode = "default";
+let onlyUnused = false;
+let copyStats = loadCopyStats();
 
 function uid(){ return "p_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 function load(){
@@ -381,17 +400,125 @@ function load(){
   return structuredClone(STARTER);
 }
 function save(){ localStorage.setItem(KEY, JSON.stringify(cards)); }
+
+function safeCount(n){
+  return Number.isSafeInteger(n) && n >= 0 ? n : 0;
+}
+function normalizeCopyStats(raw){
+  const result=Object.create(null);
+  if(!raw || typeof raw!=="object" || Array.isArray(raw)) return result;
+  for(const [id,value] of Object.entries(raw)){
+    if(!id || typeof value!=="object" || !value || Array.isArray(value)) continue;
+    const days=Object.create(null);
+    if(value.days && typeof value.days==="object" && !Array.isArray(value.days)){
+      for(const [day,count] of Object.entries(value.days)){
+        if(/^\d{4}-\d{2}-\d{2}$/.test(day) && safeCount(count)>0) days[day]=count;
+      }
+    }
+    const lastCopiedAt=typeof value.lastCopiedAt==="string" && Number.isFinite(Date.parse(value.lastCopiedAt)) ? value.lastCopiedAt : null;
+    result[id]={total:safeCount(value.total),days,lastCopiedAt};
+  }
+  return result;
+}
+function loadCopyStats(){
+  try{return normalizeCopyStats(JSON.parse(localStorage.getItem(COPY_STATS_KEY)||"{}"));}
+  catch{return Object.create(null);}
+}
+function saveCopyStats(next){
+  try{
+    localStorage.setItem(COPY_STATS_KEY,JSON.stringify(next));
+    copyStats=next;
+    return true;
+  }catch{return false;}
+}
+function localDay(d){
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function last30Days(){
+  const today=new Date();
+  today.setHours(12,0,0,0);
+  const keys=new Set();
+  for(let i=0;i<30;i++){
+    const day=new Date(today);
+    day.setDate(today.getDate()-i);
+    keys.add(localDay(day));
+  }
+  return keys;
+}
+function statTotal(id){return safeCount(copyStats[id]?.total);}
+function stat30(id,keys){
+  return Object.entries(copyStats[id]?.days||{}).reduce((sum,[day,count])=>sum+(keys.has(day)?safeCount(count):0),0);
+}
+function lastCopied(id){
+  const raw=copyStats[id]?.lastCopiedAt;
+  if(!raw) return "尚無紀錄";
+  const d=new Date(raw);
+  return Number.isFinite(d.getTime()) ? d.toLocaleString("zh-TW",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "尚無紀錄";
+}
+function compareCards(a,b,keys){
+  if(sortMode==="30d"){
+    const diff=stat30(b.id,keys)-stat30(a.id,keys);
+    if(diff) return diff;
+  }else if(sortMode==="total"){
+    const diff=statTotal(b.id)-statTotal(a.id);
+    if(diff) return diff;
+  }else if(sortMode==="last"){
+    const at=Date.parse(copyStats[a.id]?.lastCopiedAt||"")||0;
+    const bt=Date.parse(copyStats[b.id]?.lastCopiedAt||"")||0;
+    if(at!==bt) return bt-at;
+  }
+  const ai=DISPLAY_ORDER.indexOf(a.id),bi=DISPLAY_ORDER.indexOf(b.id);
+  return (ai<0?Infinity:ai)-(bi<0?Infinity:bi)||0;
+}
+function recordCopy(id){
+  const now=new Date(),day=localDay(now);
+  const previous=copyStats[id]||{total:0,days:Object.create(null),lastCopiedAt:null};
+  const nextDays={...previous.days,[day]:safeCount(previous.days?.[day])+1};
+  const next={...copyStats,[id]:{total:safeCount(previous.total)+1,days:nextDays,lastCopiedAt:now.toISOString()}};
+  return saveCopyStats(next);
+}
+function mergeCopyStats(current,incoming){
+  const merged=normalizeCopyStats(current);
+  for(const [id,other] of Object.entries(normalizeCopyStats(incoming))){
+    const existing=merged[id];
+    if(!existing){merged[id]=other;continue;}
+    const days={...existing.days};
+    for(const [day,n] of Object.entries(other.days)) days[day]=Math.max(safeCount(days[day]),n);
+    const recent=[existing.lastCopiedAt,other.lastCopiedAt].filter(Boolean).sort().at(-1)||null;
+    const sumDays=Object.values(days).reduce((sum,n)=>sum+n,0);
+    // Avoid double-counting overlapping histories when importing a backup twice.
+    merged[id]={total:Math.max(existing.total,other.total,sumDays),days,lastCopiedAt:recent};
+  }
+  return merged;
+}
+
 function esc(s=""){ return s.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m])); }
 function toast(msg="已複製"){
   const el=document.getElementById("toast"); el.textContent=msg; el.classList.add("show");
   setTimeout(()=>el.classList.remove("show"),1500);
 }
-async function copyText(text){
-  try{ await navigator.clipboard.writeText(text); }
-  catch{
-    const ta=document.createElement("textarea"); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+async function copyText(id,text){
+  let copied=false;
+  try{
+    if(!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+    await navigator.clipboard.writeText(text);
+    copied=true;
+  }catch{
+    let ta;
+    try{
+      ta=document.createElement("textarea");
+      ta.value=text;
+      document.body.appendChild(ta);
+      ta.select();
+      copied=document.execCommand("copy")===true;
+    }catch{copied=false;}
+    finally{ta?.remove();}
   }
+  if(!copied){toast("複製失敗，請再試一次");return false;}
+  if(!recordCopy(id)){toast("已複製，但無法儲存次數");return true;}
   toast("已複製 Prompt");
+  render();
+  return true;
 }
 function categories(){
   const found=[...new Set(cards.map(c=>c.category||"未分類"))];
@@ -412,23 +539,26 @@ function filtered(){
   return cards.filter(c=>{
     const catOk=category==="全部" || (c.category||"未分類")===category;
     const text=(c.title+" "+c.usage+" "+c.prompt+" "+c.category).toLowerCase();
-    return catOk && (!q || text.includes(q));
+    return catOk && (!onlyUnused || statTotal(c.id)===0) && (!q || text.includes(q));
   });
 }
 function render(){
   if(category!=="全部"&&!categories().includes(category)) category="全部";
   renderChips();
   const list=filtered();
+  const keys=last30Days();
+  const withHistory=cards.filter(c=>statTotal(c.id)>0).length;
   document.getElementById("count").textContent=`${list.length} 張卡片`;
+  document.getElementById("copySummary").textContent=`有複製紀錄 ${withHistory}／${cards.length} · 尚無紀錄 ${cards.length-withHistory}（本機）`;
   const container=document.getElementById("grid");
   if(!list.length){ container.innerHTML=`<div class="empty">沒有符合的卡片。</div>`; return; }
-  container.innerHTML=categories().filter(c=>c!=="全部"&&(category==="全部"||c===category)).map(cat=>{
-    const items=list.filter(c=>(c.category||"未分類")===cat).sort((a,b)=>{
-      const ai=DISPLAY_ORDER.indexOf(a.id),bi=DISPLAY_ORDER.indexOf(b.id);
-      return (ai<0?Infinity:ai)-(bi<0?Infinity:bi)||0;
-    });
+  const sections=sortMode==="default"
+    ? categories().filter(c=>c!=="全部"&&(category==="全部"||c===category)).map(cat=>({cat,items:list.filter(c=>(c.category||"未分類")===cat)}))
+    : [{cat:category==="全部"?"複製排行":category,items:list}];
+  container.innerHTML=sections.map(({cat,items})=>{
+    items=[...items].sort((a,b)=>compareCards(a,b,keys));
     if(!items.length) return "";
-    const hint=CATEGORY_GROUPS.find(x=>x.name===cat)?.hint||"自訂分類";
+    const hint=sortMode==="default"?(CATEGORY_GROUPS.find(x=>x.name===cat)?.hint||"自訂分類"):"依所選複製紀錄排序";
     return `
       <section class="group" aria-label="${esc(cat)}">
         <div class="grouphead">
@@ -440,6 +570,11 @@ function render(){
           <article class="card" data-id="${esc(c.id)}">
             <div class="cardtop"><div class="title">${esc(c.title)}</div></div>
             <div class="usage">${esc(c.usage||"")}</div>
+            <div class="copy-stats" aria-label="複製紀錄">
+              <span>累計 ${statTotal(c.id)} 次</span>
+              <span>近 30 天 ${stat30(c.id,keys)} 次</span>
+              <span>最後複製：${esc(lastCopied(c.id))}</span>
+            </div>
             <div class="prompt">${esc(c.prompt)}</div>
             <div class="cardfooter">
               <button class="copy" data-act="copy">複製</button>
@@ -453,7 +588,7 @@ function render(){
 
   container.querySelectorAll(".card").forEach(card=>{
     const id=card.dataset.id, item=cards.find(x=>x.id===id);
-    card.querySelector('[data-act="copy"]').onclick=()=>copyText(item.prompt);
+    card.querySelector('[data-act="copy"]').onclick=()=>copyText(item.id,item.prompt);
     card.querySelector('[data-act="expand"]').onclick=(e)=>{
       card.classList.toggle("expanded");
       e.currentTarget.textContent=card.classList.contains("expanded")?"收合":"展開";
@@ -493,19 +628,25 @@ form.onsubmit=(e)=>{
 };
 
 document.getElementById("search").oninput=e=>{ query=e.target.value; render(); };
+document.getElementById("sortBy").onchange=e=>{sortMode=e.target.value;render();};
+document.getElementById("unusedOnly").onchange=e=>{onlyUnused=e.target.checked;render();};
 
 document.getElementById("exportBtn").onclick=()=>{
-  const blob=new Blob([JSON.stringify(cards,null,2)],{type:"application/json;charset=utf-8"});
+  const backup={format:BACKUP_FORMAT,exportedAt:new Date().toISOString(),cards,copyStats};
+  const blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json;charset=utf-8"});
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
-  a.download="thinking-cards-prompts.json"; a.click(); URL.revokeObjectURL(a.href);
+  a.download="thinking-cards-backup.json"; a.click(); URL.revokeObjectURL(a.href);
 };
 
 document.getElementById("importFile").onchange=async e=>{
   const file=e.target.files?.[0]; if(!file) return;
   try{
     const data=JSON.parse(await file.text());
-    if(!Array.isArray(data)) throw new Error("JSON 必須是陣列");
-    const cleaned=data.map((x,i)=>({
+    const legacy=Array.isArray(data);
+    if(!legacy && !(data?.format===BACKUP_FORMAT && Array.isArray(data.cards))) throw new Error("必須是舊版卡片陣列或新版備份");
+    const importedStats=legacy?null:normalizeCopyStats(data.copyStats);
+    const importedCards=legacy?data:data.cards;
+    const cleaned=importedCards.map((x,i)=>({
       id:x.id||uid()+"_"+i,
       title:String(x.title||"未命名"),
       category:String(x.category||"未分類"),
@@ -517,7 +658,14 @@ document.getElementById("importFile").onchange=async e=>{
       const starter=STARTER.find(c=>c.id===item.id);
       if(starter && item.category===LEGACY_CATEGORIES[item.id]) item.category=starter.category;
     }
-    const replace=confirm(`找到 ${cleaned.length} 張卡片。\n\n按「確定」＝取代目前全部卡片\n按「取消」＝合併進目前卡片`);
+    const statsHint=importedStats
+      ? "備份內含複製紀錄：取代會還原備份統計；合併時相同日期不重複累加。"
+      : "舊版卡片陣列不含統計：目前複製紀錄會保留。";
+    const replace=confirm(`找到 ${cleaned.length} 張卡片。\n\n按「確定」＝取代全部卡片\n按「取消」＝合併卡片\n\n${statsHint}`);
+    if(importedStats){
+      const nextStats=replace?importedStats:mergeCopyStats(copyStats,importedStats);
+      if(!saveCopyStats(nextStats)) throw new Error("無法儲存複製紀錄，匯入已停止");
+    }
     if(replace) cards=cleaned;
     else{
       const byId=new Map(cards.map(x=>[x.id,x]));
