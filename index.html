@@ -40,6 +40,11 @@
   .primary{background:var(--accent);color:#082016;border-color:transparent}
   .danger{color:var(--danger)}
   .searchwrap{display:flex;gap:10px;margin-top:16px}
+  .usage-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 0}
+  .usage-controls select{width:auto;min-width:175px;max-width:100%;padding:9px 12px;font-size:13px}
+  .usage-controls label{font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center;cursor:pointer}
+  .copy-stats{display:flex;flex-wrap:wrap;gap:5px 12px;margin:0 0 10px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+  .copy-stats span{white-space:nowrap}
   input[type="search"], input[type="text"], textarea, select{
     width:100%;border:1px solid var(--line);background:#0e151c;color:var(--text);
     border-radius:14px;padding:12px 13px;font:inherit;outline:none
@@ -116,18 +121,27 @@
         <p class="sub">你的 Prompt 小工具箱：找卡片 → 複製 → 貼到 ChatGPT。</p>
       </div>
       <div class="actions">
-        <label class="filelabel" for="importFile">匯入</label>
+        <label class="filelabel" for="importFile">匯入備份</label>
         <input id="importFile" type="file" accept=".json,application/json" hidden>
-        <button id="exportBtn">匯出</button>
+        <button id="exportBtn">匯出備份</button>
       </div>
     </div>
     <div class="searchwrap">
       <input id="search" type="search" placeholder="搜尋標題、用途或 Prompt…">
     </div>
+    <div class="usage-controls" aria-label="複製紀錄篩選與排序">
+      <select id="sortBy" aria-label="卡片排序">
+        <option value="default">預設排序</option>
+        <option value="30d">近 30 天複製最多</option>
+        <option value="total">累計複製最多</option>
+        <option value="last">最近複製</option>
+      </select>
+      <label><input type="checkbox" id="unusedOnly">只看尚無複製紀錄</label>
+    </div>
     <div id="chips" class="chips"></div>
     <div class="meta">
       <span id="count"></span>
-      <span>個人修改儲存在這台瀏覽器</span>
+      <span id="copySummary">複製紀錄僅保存在這台瀏覽器</span>
     </div>
   </header>
 
@@ -163,7 +177,7 @@
       <label for="prompt">Prompt</label>
       <textarea id="prompt" required placeholder="貼上完整提示詞"></textarea>
     </div>
-    <div class="note">儲存後會留在這台瀏覽器的 localStorage。可用「匯出」備份成 JSON。</div>
+    <div class="note">卡片與複製紀錄保存在這台瀏覽器。可用「匯出備份」保存 JSON；舊版卡片陣列仍可匯入。</div>
     <div class="modalactions">
       <button value="cancel" type="button" id="cancelBtn">取消</button>
       <button class="primary" value="save" type="submit">儲存</button>
@@ -525,23 +539,26 @@ function filtered(){
   return cards.filter(c=>{
     const catOk=category==="全部" || (c.category||"未分類")===category;
     const text=(c.title+" "+c.usage+" "+c.prompt+" "+c.category).toLowerCase();
-    return catOk && (!q || text.includes(q));
+    return catOk && (!onlyUnused || statTotal(c.id)===0) && (!q || text.includes(q));
   });
 }
 function render(){
   if(category!=="全部"&&!categories().includes(category)) category="全部";
   renderChips();
   const list=filtered();
+  const keys=last30Days();
+  const withHistory=cards.filter(c=>statTotal(c.id)>0).length;
   document.getElementById("count").textContent=`${list.length} 張卡片`;
+  document.getElementById("copySummary").textContent=`有複製紀錄 ${withHistory}／${cards.length} · 尚無紀錄 ${cards.length-withHistory}（本機）`;
   const container=document.getElementById("grid");
   if(!list.length){ container.innerHTML=`<div class="empty">沒有符合的卡片。</div>`; return; }
-  container.innerHTML=categories().filter(c=>c!=="全部"&&(category==="全部"||c===category)).map(cat=>{
-    const items=list.filter(c=>(c.category||"未分類")===cat).sort((a,b)=>{
-      const ai=DISPLAY_ORDER.indexOf(a.id),bi=DISPLAY_ORDER.indexOf(b.id);
-      return (ai<0?Infinity:ai)-(bi<0?Infinity:bi)||0;
-    });
+  const sections=sortMode==="default"
+    ? categories().filter(c=>c!=="全部"&&(category==="全部"||c===category)).map(cat=>({cat,items:list.filter(c=>(c.category||"未分類")===cat)}))
+    : [{cat:category==="全部"?"複製排行":category,items:list}];
+  container.innerHTML=sections.map(({cat,items})=>{
+    items=[...items].sort((a,b)=>compareCards(a,b,keys));
     if(!items.length) return "";
-    const hint=CATEGORY_GROUPS.find(x=>x.name===cat)?.hint||"自訂分類";
+    const hint=sortMode==="default"?(CATEGORY_GROUPS.find(x=>x.name===cat)?.hint||"自訂分類"):"依所選複製紀錄排序";
     return `
       <section class="group" aria-label="${esc(cat)}">
         <div class="grouphead">
@@ -553,6 +570,11 @@ function render(){
           <article class="card" data-id="${esc(c.id)}">
             <div class="cardtop"><div class="title">${esc(c.title)}</div></div>
             <div class="usage">${esc(c.usage||"")}</div>
+            <div class="copy-stats" aria-label="複製紀錄">
+              <span>累計 ${statTotal(c.id)} 次</span>
+              <span>近 30 天 ${stat30(c.id,keys)} 次</span>
+              <span>最後複製：${esc(lastCopied(c.id))}</span>
+            </div>
             <div class="prompt">${esc(c.prompt)}</div>
             <div class="cardfooter">
               <button class="copy" data-act="copy">複製</button>
@@ -566,7 +588,7 @@ function render(){
 
   container.querySelectorAll(".card").forEach(card=>{
     const id=card.dataset.id, item=cards.find(x=>x.id===id);
-    card.querySelector('[data-act="copy"]').onclick=()=>copyText(item.prompt);
+    card.querySelector('[data-act="copy"]').onclick=()=>copyText(item.id,item.prompt);
     card.querySelector('[data-act="expand"]').onclick=(e)=>{
       card.classList.toggle("expanded");
       e.currentTarget.textContent=card.classList.contains("expanded")?"收合":"展開";
@@ -606,6 +628,8 @@ form.onsubmit=(e)=>{
 };
 
 document.getElementById("search").oninput=e=>{ query=e.target.value; render(); };
+document.getElementById("sortBy").onchange=e=>{sortMode=e.target.value;render();};
+document.getElementById("unusedOnly").onchange=e=>{onlyUnused=e.target.checked;render();};
 
 document.getElementById("exportBtn").onclick=()=>{
   const blob=new Blob([JSON.stringify(cards,null,2)],{type:"application/json;charset=utf-8"});
