@@ -269,6 +269,8 @@ const STARTER = [
 ];
 
 const KEY = "thinkingCards.v1";
+const COPY_STATS_KEY = "thinkingCards.copyStats.v1";
+const BACKUP_FORMAT = "thinking-cards-backup-v2";
 const OLD_LOOP_MIGRATION_KEY = "thinkingCards.added.loop-diagnosis-v0.3";
 const GROUP_MIGRATION_KEY = "thinkingCards.migrated.three-groups-nine-cards-v1";
 const GLOBAL_RESEARCH_MIGRATION_KEY = "thinkingCards.added.global-research-navigator-v0.1";
@@ -298,6 +300,9 @@ const DISPLAY_ORDER = [
 let cards = load();
 let category = "全部";
 let query = "";
+let sortMode = "default";
+let onlyUnused = false;
+let copyStats = loadCopyStats();
 
 function uid(){ return "p_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 function load(){
@@ -381,17 +386,125 @@ function load(){
   return structuredClone(STARTER);
 }
 function save(){ localStorage.setItem(KEY, JSON.stringify(cards)); }
+
+function safeCount(n){
+  return Number.isSafeInteger(n) && n >= 0 ? n : 0;
+}
+function normalizeCopyStats(raw){
+  const result=Object.create(null);
+  if(!raw || typeof raw!=="object" || Array.isArray(raw)) return result;
+  for(const [id,value] of Object.entries(raw)){
+    if(!id || typeof value!=="object" || !value || Array.isArray(value)) continue;
+    const days=Object.create(null);
+    if(value.days && typeof value.days==="object" && !Array.isArray(value.days)){
+      for(const [day,count] of Object.entries(value.days)){
+        if(/^\\d{4}-\\d{2}-\\d{2}$/.test(day) && safeCount(count)>0) days[day]=count;
+      }
+    }
+    const lastCopiedAt=typeof value.lastCopiedAt==="string" && Number.isFinite(Date.parse(value.lastCopiedAt)) ? value.lastCopiedAt : null;
+    result[id]={total:safeCount(value.total),days,lastCopiedAt};
+  }
+  return result;
+}
+function loadCopyStats(){
+  try{return normalizeCopyStats(JSON.parse(localStorage.getItem(COPY_STATS_KEY)||"{}"));}
+  catch{return Object.create(null);}
+}
+function saveCopyStats(next){
+  try{
+    localStorage.setItem(COPY_STATS_KEY,JSON.stringify(next));
+    copyStats=next;
+    return true;
+  }catch{return false;}
+}
+function localDay(d){
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function last30Days(){
+  const today=new Date();
+  today.setHours(12,0,0,0);
+  const keys=new Set();
+  for(let i=0;i<30;i++){
+    const day=new Date(today);
+    day.setDate(today.getDate()-i);
+    keys.add(localDay(day));
+  }
+  return keys;
+}
+function statTotal(id){return safeCount(copyStats[id]?.total);}
+function stat30(id,keys){
+  return Object.entries(copyStats[id]?.days||{}).reduce((sum,[day,count])=>sum+(keys.has(day)?safeCount(count):0),0);
+}
+function lastCopied(id){
+  const raw=copyStats[id]?.lastCopiedAt;
+  if(!raw) return "尚無紀錄";
+  const d=new Date(raw);
+  return Number.isFinite(d.getTime()) ? d.toLocaleString("zh-TW",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "尚無紀錄";
+}
+function compareCards(a,b,keys){
+  if(sortMode==="30d"){
+    const diff=stat30(b.id,keys)-stat30(a.id,keys);
+    if(diff) return diff;
+  }else if(sortMode==="total"){
+    const diff=statTotal(b.id)-statTotal(a.id);
+    if(diff) return diff;
+  }else if(sortMode==="last"){
+    const at=Date.parse(copyStats[a.id]?.lastCopiedAt||"")||0;
+    const bt=Date.parse(copyStats[b.id]?.lastCopiedAt||"")||0;
+    if(at!==bt) return bt-at;
+  }
+  const ai=DISPLAY_ORDER.indexOf(a.id),bi=DISPLAY_ORDER.indexOf(b.id);
+  return (ai<0?Infinity:ai)-(bi<0?Infinity:bi)||0;
+}
+function recordCopy(id){
+  const now=new Date(),day=localDay(now);
+  const previous=copyStats[id]||{total:0,days:Object.create(null),lastCopiedAt:null};
+  const nextDays={...previous.days,[day]:safeCount(previous.days?.[day])+1};
+  const next={...copyStats,[id]:{total:safeCount(previous.total)+1,days:nextDays,lastCopiedAt:now.toISOString()}};
+  return saveCopyStats(next);
+}
+function mergeCopyStats(current,incoming){
+  const merged=normalizeCopyStats(current);
+  for(const [id,other] of Object.entries(normalizeCopyStats(incoming))){
+    const existing=merged[id];
+    if(!existing){merged[id]=other;continue;}
+    const days={...existing.days};
+    for(const [day,n] of Object.entries(other.days)) days[day]=Math.max(safeCount(days[day]),n);
+    const recent=[existing.lastCopiedAt,other.lastCopiedAt].filter(Boolean).sort().at(-1)||null;
+    const sumDays=Object.values(days).reduce((sum,n)=>sum+n,0);
+    // Avoid double-counting overlapping histories when importing a backup twice.
+    merged[id]={total:Math.max(existing.total,other.total,sumDays),days,lastCopiedAt:recent};
+  }
+  return merged;
+}
+
 function esc(s=""){ return s.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m])); }
 function toast(msg="已複製"){
   const el=document.getElementById("toast"); el.textContent=msg; el.classList.add("show");
   setTimeout(()=>el.classList.remove("show"),1500);
 }
-async function copyText(text){
-  try{ await navigator.clipboard.writeText(text); }
-  catch{
-    const ta=document.createElement("textarea"); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+async function copyText(id,text){
+  let copied=false;
+  try{
+    if(!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+    await navigator.clipboard.writeText(text);
+    copied=true;
+  }catch{
+    let ta;
+    try{
+      ta=document.createElement("textarea");
+      ta.value=text;
+      document.body.appendChild(ta);
+      ta.select();
+      copied=document.execCommand("copy")===true;
+    }catch{copied=false;}
+    finally{ta?.remove();}
   }
+  if(!copied){toast("複製失敗，請再試一次");return false;}
+  if(!recordCopy(id)){toast("已複製，但無法儲存次數");return true;}
   toast("已複製 Prompt");
+  render();
+  return true;
 }
 function categories(){
   const found=[...new Set(cards.map(c=>c.category||"未分類"))];
