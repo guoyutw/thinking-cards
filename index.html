@@ -632,17 +632,21 @@ document.getElementById("sortBy").onchange=e=>{sortMode=e.target.value;render();
 document.getElementById("unusedOnly").onchange=e=>{onlyUnused=e.target.checked;render();};
 
 document.getElementById("exportBtn").onclick=()=>{
-  const blob=new Blob([JSON.stringify(cards,null,2)],{type:"application/json;charset=utf-8"});
+  const backup={format:BACKUP_FORMAT,exportedAt:new Date().toISOString(),cards,copyStats};
+  const blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json;charset=utf-8"});
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
-  a.download="thinking-cards-prompts.json"; a.click(); URL.revokeObjectURL(a.href);
+  a.download="thinking-cards-backup.json"; a.click(); URL.revokeObjectURL(a.href);
 };
 
 document.getElementById("importFile").onchange=async e=>{
   const file=e.target.files?.[0]; if(!file) return;
   try{
     const data=JSON.parse(await file.text());
-    if(!Array.isArray(data)) throw new Error("JSON 必須是陣列");
-    const cleaned=data.map((x,i)=>({
+    const legacy=Array.isArray(data);
+    if(!legacy && !(data?.format===BACKUP_FORMAT && Array.isArray(data.cards))) throw new Error("必須是舊版卡片陣列或新版備份");
+    const importedStats=legacy?null:normalizeCopyStats(data.copyStats);
+    const importedCards=legacy?data:data.cards;
+    const cleaned=importedCards.map((x,i)=>({
       id:x.id||uid()+"_"+i,
       title:String(x.title||"未命名"),
       category:String(x.category||"未分類"),
@@ -655,6 +659,10 @@ document.getElementById("importFile").onchange=async e=>{
       if(starter && item.category===LEGACY_CATEGORIES[item.id]) item.category=starter.category;
     }
     const replace=confirm(`找到 ${cleaned.length} 張卡片。\n\n按「確定」＝取代目前全部卡片\n按「取消」＝合併進目前卡片`);
+    if(importedStats){
+      const nextStats=replace?importedStats:mergeCopyStats(copyStats,importedStats);
+      if(!saveCopyStats(nextStats)) throw new Error("無法儲存複製紀錄，匯入已停止");
+    }
     if(replace) cards=cleaned;
     else{
       const byId=new Map(cards.map(x=>[x.id,x]));
